@@ -1,204 +1,190 @@
-# Pytorch версия
-
+import logging
 import gym
+import pickle
+from itertools import count
 
+import numpy as np
+
+from torch import from_numpy, sigmoid
 from torch import nn, optim
 from torch.nn import functional as F
 
 
-# hyperparameters
-H = 200  # number of hidden layer neurons
-batch_size = 10  # every how many episodes to do a param update?
-learning_rate = 1e-4
-gamma = 0.99  # discount factor for reward
-decay_rate = 0.99  # decay factor for RMSProp leaky sum of grad^2
-resume = False  # resume from previous checkpoint?
-render = False
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(levelname)s %(asctime)s %(message)s',
+)
 
-# model initialization
-D = 80 * 80  # input dimensionality: 80x80 grid
+logger = logging.getLogger(__name__)
 
 
-class Net(nn.Module):
+class PongAgent(nn.Module):
+    render = False
+    model_filename = 'model_pytorch.pkl'
 
-    def __init__(self, env):
+    batch_size = 10                    # every how many episodes to do a param update?
+    save_model_frequency = 100         # через сколько игр сохранять модель (т.е. ее параметры)
+
+    def __init__(self):
         super().__init__()
 
+        input_units = 80 * 80                   # input dimensionality: 80x80 grid
+        hidden_units = 200                      # number of hidden layer neurons
 
-        self.fc1 = nn.Linear(D, H)
-        self.fc2 = nn.Linear(H, 1)
+        # todo попробовать сверточный слой
+        self.fc1 = nn.Linear(input_units, hidden_units)
+        self.fc2 = nn.Linear(hidden_units, 1)
 
-        self.optimizer = optim.SGD(self.parameters(), lr=0.01)
+        self.optimizer = optim.SGD(self.parameters(), lr=1e-4)
 
-        self.env = env
+        self.clean_buffers()
 
+        self.env = gym.make('Pong-v0')
 
-    def save_parameters(self):
-        raise NotImplementedError
+    def clean_buffers(self):
+        """Буферы используются для хранения всех состояний, действий и вознаграждений в текущей итерации обучения"""
 
-    def load_parameters(self):
-        raise NotImplementedError
+        self.action_probs = []
+        self.states = []
+        self.rewards = []
+
+    @classmethod
+    def load_model(cls, resume=True):
+        """Предзагрузка модели с параметрами"""
+
+        try:
+            if not resume:
+                raise FileNotFoundError
+            with open(cls.model_filename, 'rb') as f:
+                logger.info(f'Загрузка модели из файла {cls.model_filename}')
+                agent = pickle.load(f)
+        except FileNotFoundError:
+            logger.info('Создание новой модели')
+            agent = cls()
+
+        return agent
+
+    def save_model(self):
+        with open(self.model_filename, 'wb') as f:
+            pickle.dump(self, f)
 
     def policy_forward(self, x):
+        """Одинарный проход по сети"""
         x = F.relu(self.fc1(x))
-        x = F.sigmoid(self.fc2(x))
+        x = sigmoid(self.fc2(x))
         return x
 
-    def prepro(self, image):
+    def forward(self, x):
+        return self.policy_forward(x)
+
+    def preprocess(self, image):
         """ prepro 210x160x3 uint8 frame into 6400 (80x80) 1D float vector """
         image = image[35:195]  # crop
         image = image[::2, ::2, 0]  # downsample by factor of 2
         image[image == 144] = 0  # erase background (background type 1)
         image[image == 109] = 0  # erase background (background type 2)
         image[image != 0] = 1  # everything else (paddles, ball) just set to 1
-        return image.astype(np.float).ravel()
+        return from_numpy(image.astype(np.float32).ravel())
 
-    def forward(self, x):
-        # todo Тут должен быть полный проход?
-        # Вызывается при вызове call на экземпляре класса
-        # x = self.policy_forward(x)
+    def encode_action(self, action):
+        """env принимает значения 2 и 3 в качестве управляющих"""
+        return 2 if action else 3
 
-        observation = self.env.reset()
+    def spread_reward(self):
+        """В конце раунда последний reward выставляется для всех фреймов ранее (с нулевым вознаграждением)"""
 
-        return x
+        """
+        def discount_rewards(r):
+            # take 1D float array of rewards and compute discounted reward
+            discounted_r = np.zeros_like(r)
+            running_add = 0
+            for t in reversed(range(0, r.size)):
+                if r[t] != 0: running_add = 0  # reset the sum, since this was a game boundary (pong specific!)
+                running_add = running_add * gamma + r[t]            # gammea = 0.99
+                discounted_r[t] = running_add
+            return discounted_r
+        """
 
+        rewards = []
+        last_reward = None
+        for reward in reversed(self.rewards):
+            if reward != 0:
+                last_reward = reward
+            rewards.append(last_reward)
 
-env = gym.make("Pong-v0")
+        self.rewards = rewards
 
-# todo предзагрузка параметров из файла
+    def run_round(self, state, round):
+        """Один раунд игры (до первого пропущенного шарика)"""
 
-net = Net(env)
-print(net)
-# print(list(net.parameters()))
-
-exit()
-
-n = 0
-while n < 10:
-    n += 1
-
-    net.optimizer.zero_grad()   # zero the gradient buffers     # todo нужно делать только после получения reward
-
-    output = net(input)                     # Вычисления, чтобы получить какой-то результат
-    loss = criterion(output, target)        # Тут главное: вычисление значения функции потерь
-    loss.backward()
-
-    net.optimizer.step()    # Does the update
-
-
-exit()
-
-
-""" Trains an agent with (stochastic) Policy Gradients on Pong. Uses OpenAI Gym. """
-import numpy as np
-import pickle
-
-if resume:
-    with open('save.p', 'rb') as f:
-        model = pickle.load(f)
-else:
-    model = {}
-    model['W1'] = np.random.randn(H, D) / np.sqrt(D)  # "Xavier" initialization
-    model['W2'] = np.random.randn(H) / np.sqrt(H)
-
-grad_buffer = {k: np.zeros_like(v) for k, v in model.items()}  # update buffers that add up gradients over a batch
-rmsprop_cache = {k: np.zeros_like(v) for k, v in model.items()}  # rmsprop memory
-
-
-def discount_rewards(r):
-    """ take 1D float array of rewards and compute discounted reward """
-    discounted_r = np.zeros_like(r)
-    running_add = 0
-    for t in reversed(range(0, r.size)):
-        if r[t] != 0: running_add = 0  # reset the sum, since this was a game boundary (pong specific!)
-        running_add = running_add * gamma + r[t]
-        discounted_r[t] = running_add
-    return discounted_r
-
-
-def policy_backward(eph, epdlogp):
-    """ backward pass. (eph is array of intermediate hidden states) """
-    dW2 = np.dot(eph.T, epdlogp).ravel()
-    dh = np.outer(epdlogp, model['W2'])
-    dh[eph <= 0] = 0  # backpro prelu
-    dW1 = np.dot(dh.T, epx)
-    return {'W1': dW1, 'W2': dW2}
-
-
-env = gym.make("Pong-v0")
-observation = env.reset()
-prev_x = None  # used in computing the difference frame
-xs, hs, dlogps, drs = [], [], [], []
-running_reward = None
-reward_sum = 0
-episode_number = 0
-while True:
-    if render:
-        env.render()
-
-    # preprocess the observation, set input to network to be difference image
-    cur_x = prepro(observation)
-    x = cur_x - prev_x if prev_x is not None else np.zeros(D)
-    prev_x = cur_x
-
-    # forward the policy network and sample an action from the returned probability
-    aprob, h = policy_forward(x)
-    action = 2 if np.random.uniform() < aprob else 3  # roll the dice!
-
-    # record various intermediates (needed later for backprop)
-    xs.append(x)  # observation
-    hs.append(h)  # hidden state
-    y = 1 if action == 2 else 0  # a "fake label"
-    dlogps.append(y - aprob)  # grad that encourages the action that was taken to be taken (see http://cs231n.github.io/neural-networks-2/#losses if confused)
-
-    # step the environment and get new measurements
-    observation, reward, done, info = env.step(action)
-    reward_sum += reward
-
-    drs.append(reward)  # record reward (has to be done after we call step() to get reward for previous action)
-
-    if done:  # an episode finished
-        episode_number += 1
-
-        # stack together all inputs, hidden states, action gradients, and rewards for this episode
-        epx = np.vstack(xs)
-        eph = np.vstack(hs)
-        epdlogp = np.vstack(dlogps)
-        epr = np.vstack(drs)
-        xs, hs, dlogps, drs = [], [], [], []  # reset array memory
-
-        # compute the discounted reward backwards through time
-        discounted_epr = discount_rewards(epr)
-        # standardize the rewards to be unit normal (helps control the gradient estimator variance)
-        discounted_epr -= np.mean(discounted_epr)
-        discounted_epr /= np.std(discounted_epr)
-
-        epdlogp *= discounted_epr  # modulate the gradient with advantage (PG magic happens right here.)
-        grad = policy_backward(eph, epdlogp)
-        for k in model:
-            grad_buffer[k] += grad[k]  # accumulate grad over batch
-
-        # perform rmsprop parameter update every batch_size episodes
-        if episode_number % batch_size == 0:
-            for k, v in model.items():
-                g = grad_buffer[k]  # gradient
-                rmsprop_cache[k] = decay_rate * rmsprop_cache[k] + (1 - decay_rate) * g ** 2
-                model[k] += learning_rate * g / (np.sqrt(rmsprop_cache[k]) + 1e-5)
-                grad_buffer[k] = np.zeros_like(v)  # reset batch gradient buffer
-
-        # boring book-keeping
-        running_reward = reward_sum if running_reward is None else running_reward * 0.99 + reward_sum * 0.01
-        print(f'resetting env. episode reward total was {reward_sum}. running mean: {running_reward}')
-
-        # Каждые 100 эпизодов сохранение параметров на диск
-        if episode_number % 100 == 0:
-            with open('save.p', 'wb') as f:
-                pickle.dump(model, f)
-
-        # Обнуление значений, рестарт окружения
+        # Цикл по фреймам игры, т.е. по картинке в каждый момент игрового времени
         reward_sum = 0
-        observation = env.reset()  # reset env
-        prev_x = None
+        for frame in count():
+            self.states.append(state)                       # Сохранение состояния
 
-    if reward != 0:  # Pong has either +1 or -1 reward exactly when game ends.
-        print(f'ep {episode_number}: game finished, reward: {reward}' + '' if reward == -1 else ' !!!!!!!!')
+            action_prob = self.policy_forward(state)
+            action = 1 if np.random.uniform() else 0             # sample действия из ответа сети
+
+            image, reward, done, info = self.env.step(self.encode_action(action))
+            state = self.preprocess(image)
+
+            self.action_probs.append(action_prob)
+            self.rewards.append(reward)                     # Сохранение вознаграждение после действия в состоянии
+
+            reward_sum += reward
+
+            if reward != 0:
+                # Шарик улетел, выигрыш получен (1 или -1)
+                logger.debug(f'Раунд {round:02d}' + (' WIN' if reward == 1 else ''))
+                return state, done
+
+    def run_game(self, state):
+        """Одна игра (до 21 очка)"""
+
+        # Цикл по раундам
+        for round in count(start=1):
+            state, done = self.run_round(state, round)
+
+            if done:
+                # Один из игроков набрал 21 очко
+                score = sum(self.rewards)
+                self.spread_reward()
+                return state, score
+
+    def update_parameters(self):
+        return      # todo
+        self.optimizer.zero_grad()   # zero the gradient buffers     # todo нужно делать только после получения reward
+
+        output = agent(input)                     # Вычисления, чтобы получить какой-то результат
+        loss = criterion(output, target)        # Тут главное: вычисление значения функции потерь
+        loss.backward()
+
+        self.optimizer.step()
+
+    def training_loop(self):
+        initial_image = self.env.reset()
+        state = self.preprocess(initial_image)
+
+        for game in count(start=1):
+            state, score = agent.run_game(state)
+
+            logger.debug(f'Игра {game} завершилась со счетом {score:.0f}')
+
+            # Оптимизация каждые batch_size сыгранных игр
+            if game % self.batch_size == 0:
+                logger.debug(f'Оптимизация {game / self.batch_size:.0f}')
+                self.update_parameters()
+
+            # Каждые save_model_frequency игр модель сохраняется в файл
+            if game % self.save_model_frequency == 0:
+                logger.info('Сохранение модели в файл')
+                self.save_model()
+
+            break           # todo
+
+
+# todo предзагрузить в модель параметры из numpy версии
+
+if __name__ == '__main__':
+    agent = PongAgent.load_model(resume=False)
+    agent.training_loop()
