@@ -5,7 +5,7 @@ from itertools import count
 
 import numpy as np
 
-from torch import from_numpy, sigmoid
+import torch
 from torch import nn, optim
 from torch.nn import functional as F
 
@@ -45,6 +45,7 @@ class PongAgent(nn.Module):
         """Буферы используются для хранения всех состояний, действий и вознаграждений в текущей итерации обучения"""
 
         self.action_probs = []
+        self.actions = []
         self.states = []
         self.rewards = []
 
@@ -71,20 +72,26 @@ class PongAgent(nn.Module):
     def policy_forward(self, x):
         """Одинарный проход по сети"""
         x = F.relu(self.fc1(x))
-        x = sigmoid(self.fc2(x))
+        x = torch.sigmoid(self.fc2(x))
         return x
 
     def forward(self, x):
         return self.policy_forward(x)
 
-    def preprocess(self, image):
+    def preprocess(self, image, old_state=None):
         """ prepro 210x160x3 uint8 frame into 6400 (80x80) 1D float vector """
+
         image = image[35:195]  # crop
         image = image[::2, ::2, 0]  # downsample by factor of 2
         image[image == 144] = 0  # erase background (background type 1)
         image[image == 109] = 0  # erase background (background type 2)
         image[image != 0] = 1  # everything else (paddles, ball) just set to 1
-        return from_numpy(image.astype(np.float32).ravel())
+
+        new_state = torch.from_numpy(image.astype(np.float32).ravel())
+        if old_state is None:
+            old_state = torch.zeros_like(new_state)
+
+        return new_state - old_state
 
     def encode_action(self, action):
         """env принимает значения 2 и 3 в качестве управляющих"""
@@ -118,54 +125,57 @@ class PongAgent(nn.Module):
         """Один раунд игры (до первого пропущенного шарика)"""
 
         # Цикл по фреймам игры, т.е. по картинке в каждый момент игрового времени
-        reward_sum = 0
         for frame in count():
             self.states.append(state)                       # Сохранение состояния
 
             action_prob = self.policy_forward(state)
             action = 1 if np.random.uniform() else 0             # sample действия из ответа сети
-
-            image, reward, done, info = self.env.step(self.encode_action(action))
-            state = self.preprocess(image)
-
             self.action_probs.append(action_prob)
-            self.rewards.append(reward)                     # Сохранение вознаграждение после действия в состоянии
+            self.actions.append(action)
 
-            reward_sum += reward
+            old_state = state
+            image, reward, done, info = self.env.step(self.encode_action(action))
+            state = self.preprocess(image, old_state)
+
+            self.rewards.append(reward)                     # Сохранение вознаграждение после действия в состоянии
 
             if reward != 0:
                 # Шарик улетел, выигрыш получен (1 или -1)
                 logger.debug(f'Раунд {round:02d}' + (' WIN' if reward == 1 else ''))
-                return state, done
+                return state, reward, done
 
     def run_game(self, state):
         """Одна игра (до 21 очка)"""
 
         # Цикл по раундам
+        reward_sum = 0
         for round in count(start=1):
-            state, done = self.run_round(state, round)
+            state, reward, done = self.run_round(state, round)
+
+            reward_sum += reward
 
             if done:
                 # Один из игроков набрал 21 очко
-                score = sum(self.rewards)
-                self.spread_reward()
-                return state, score
+                return state, reward_sum
 
     def update_parameters(self):
-        return      # todo
-        self.optimizer.zero_grad()   # zero the gradient buffers     # todo нужно делать только после получения reward
+        return # todo
+        self.spread_reward()
 
-        output = agent(input)                     # Вычисления, чтобы получить какой-то результат
+        self.optimizer.zero_grad()
+
         loss = criterion(output, target)        # Тут главное: вычисление значения функции потерь
         loss.backward()
 
         self.optimizer.step()
 
+        self.clean_buffers()
+
     def training_loop(self):
-        initial_image = self.env.reset()
-        state = self.preprocess(initial_image)
 
         for game in count(start=1):
+            image = self.env.reset()
+            state = self.preprocess(image)
             state, score = agent.run_game(state)
 
             logger.debug(f'Игра {game} завершилась со счетом {score:.0f}')
@@ -179,8 +189,6 @@ class PongAgent(nn.Module):
             if game % self.save_model_frequency == 0:
                 logger.info('Сохранение модели в файл')
                 self.save_model()
-
-            break           # todo
 
 
 # todo предзагрузить в модель параметры из numpy версии
