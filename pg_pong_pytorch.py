@@ -11,7 +11,7 @@ from torch.nn import functional as F
 
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(levelname)s %(asctime)s %(message)s',
 )
 
@@ -24,6 +24,8 @@ class PongAgent(nn.Module):
 
     batch_size = 10                    # every how many episodes to do a param update?
     save_model_frequency = 100         # через сколько игр сохранять модель (т.е. ее параметры)
+
+    last_game = 0
 
     def __init__(self):
         super().__init__()
@@ -126,10 +128,12 @@ class PongAgent(nn.Module):
 
         # Цикл по фреймам игры, т.е. по картинке в каждый момент игрового времени
         for frame in count():
+            if self.render:
+                self.env.render()
             self.states.append(state)                       # Сохранение состояния
 
             action_prob = self.policy_forward(state)
-            action = 1 if np.random.uniform() else 0             # sample действия из ответа сети
+            action = torch.bernoulli(action_prob)           # sample действия из ответа сети
             self.action_probs.append(action_prob)
             self.actions.append(action)
 
@@ -159,12 +163,15 @@ class PongAgent(nn.Module):
                 return state, reward_sum
 
     def update_parameters(self):
-        return # todo
         self.spread_reward()
 
         self.optimizer.zero_grad()
 
-        loss = criterion(output, target)        # Тут главное: вычисление значения функции потерь
+        actions = torch.tensor(self.actions).float()
+        action_probs = torch.tensor(self.action_probs, requires_grad=True)
+        sampled_action_probs = torch.abs(actions - action_probs)        # Вероятности реально соверешнных действий
+
+        loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).mean()
         loss.backward()
 
         self.optimizer.step()
@@ -173,16 +180,17 @@ class PongAgent(nn.Module):
 
     def training_loop(self):
 
-        for game in count(start=1):
+        for game in count(start=self.last_game + 1):
             image = self.env.reset()
             state = self.preprocess(image)
             state, score = agent.run_game(state)
 
-            logger.debug(f'Игра {game} завершилась со счетом {score:.0f}')
+            logger.info(f'Игра {game} завершилась со счетом {score:.0f}')
+            self.last_game = game
 
             # Оптимизация каждые batch_size сыгранных игр
             if game % self.batch_size == 0:
-                logger.debug(f'Оптимизация {game / self.batch_size:.0f}')
+                logger.info(f'Оптимизация {game / self.batch_size:.0f}')
                 self.update_parameters()
 
             # Каждые save_model_frequency игр модель сохраняется в файл
@@ -194,5 +202,5 @@ class PongAgent(nn.Module):
 # todo предзагрузить в модель параметры из numpy версии
 
 if __name__ == '__main__':
-    agent = PongAgent.load_model(resume=False)
+    agent = PongAgent.load_model()
     agent.training_loop()
