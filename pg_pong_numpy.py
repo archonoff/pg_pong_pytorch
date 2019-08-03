@@ -147,4 +147,4 @@ while True:
         prev_x = None
 
     if reward != 0:  # Pong has either +1 or -1 reward exactly when game ends.
-        print(f'ep {episode_number}: game finished, reward: {reward}' + '' if reward == -1 else ' !!!!!!!!')
+        print(f'ep {episode_number}: game finished, reward: {reward}', '' if reward == -1 else ' !!!!!!!!')
