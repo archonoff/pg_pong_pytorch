@@ -24,7 +24,7 @@ class PongAgent(nn.Module):
 
     batch_size = 10                    # every how many episodes to do a param update?
     save_model_frequency = 100         # через сколько игр сохранять модель (т.е. ее параметры)
-    learning_rate = 1e-4
+    learning_rate = 0.01
     discounting_gamma = 0.99
 
     last_game = 0
@@ -39,7 +39,7 @@ class PongAgent(nn.Module):
         self.fc1 = nn.Linear(input_units, hidden_units)
         self.fc2 = nn.Linear(hidden_units, 1)
 
-        self.optimizer = optim.SGD(self.parameters(), lr=self.learning_rate)
+        self.optimizer = optim.RMSprop(self.parameters(), lr=self.learning_rate)
 
         self.clean_buffers()
 
@@ -104,10 +104,17 @@ class PongAgent(nn.Module):
         return 2 if action else 3
 
     def discount_reward(self):
+        self.rewards = np.array(self.rewards, dtype=np.float32)
         for i in range(len(self.rewards) - 1, -1, -1):
             if self.rewards[i] != 0:        # Последний элемент списка не должен быть равен нулю, или будет ошибка
                 continue
             self.rewards[i] = self.rewards[i + 1] * self.discounting_gamma
+
+    def normalize_reward(self):
+        mean = np.mean(self.rewards)
+        std = np.std(self.rewards)
+        self.rewards -= mean
+        self.rewards /= std
 
     def run_round(self, state, round):
         """Один раунд игры (до первого пропущенного шарика)"""
@@ -150,6 +157,7 @@ class PongAgent(nn.Module):
 
     def update_parameters(self):
         self.discount_reward()
+        self.normalize_reward()
 
         self.optimizer.zero_grad()
 
