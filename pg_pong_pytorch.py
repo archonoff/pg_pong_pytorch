@@ -24,6 +24,8 @@ class PongAgent(nn.Module):
 
     batch_size = 10                    # every how many episodes to do a param update?
     save_model_frequency = 100         # через сколько игр сохранять модель (т.е. ее параметры)
+    learning_rate = 1e-4
+    discounting_gamma = 0.99
 
     last_game = 0
 
@@ -37,7 +39,7 @@ class PongAgent(nn.Module):
         self.fc1 = nn.Linear(input_units, hidden_units)
         self.fc2 = nn.Linear(hidden_units, 1)
 
-        self.optimizer = optim.SGD(self.parameters(), lr=1e-4)
+        self.optimizer = optim.SGD(self.parameters(), lr=self.learning_rate)
 
         self.clean_buffers()
 
@@ -80,7 +82,8 @@ class PongAgent(nn.Module):
     def forward(self, x):
         return self.policy_forward(x)
 
-    def preprocess(self, image, old_state=None):
+    @staticmethod
+    def preprocess(image, old_state=None):
         """ prepro 210x160x3 uint8 frame into 6400 (80x80) 1D float vector """
 
         image = image[35:195]  # crop
@@ -95,33 +98,16 @@ class PongAgent(nn.Module):
 
         return new_state - old_state
 
-    def encode_action(self, action):
+    @staticmethod
+    def encode_action(action):
         """env принимает значения 2 и 3 в качестве управляющих"""
         return 2 if action else 3
 
-    def spread_reward(self):
-        """В конце раунда последний reward выставляется для всех фреймов ранее (с нулевым вознаграждением)"""
-
-        """
-        def discount_rewards(r):
-            # take 1D float array of rewards and compute discounted reward
-            discounted_r = np.zeros_like(r)
-            running_add = 0
-            for t in reversed(range(0, r.size)):
-                if r[t] != 0: running_add = 0  # reset the sum, since this was a game boundary (pong specific!)
-                running_add = running_add * gamma + r[t]            # gammea = 0.99
-                discounted_r[t] = running_add
-            return discounted_r
-        """
-
-        rewards = []
-        last_reward = None
-        for reward in reversed(self.rewards):
-            if reward != 0:
-                last_reward = reward
-            rewards.append(last_reward)
-
-        self.rewards = rewards
+    def discount_reward(self):
+        for i in range(len(self.rewards) - 1, -1, -1):
+            if self.rewards[i] != 0:        # Последний элемент списка не должен быть равен нулю, или будет ошибка
+                continue
+            self.rewards[i] = self.rewards[i + 1] * self.discounting_gamma
 
     def run_round(self, state, round):
         """Один раунд игры (до первого пропущенного шарика)"""
@@ -163,7 +149,7 @@ class PongAgent(nn.Module):
                 return state, reward_sum
 
     def update_parameters(self):
-        self.spread_reward()
+        self.discount_reward()
 
         self.optimizer.zero_grad()
 
