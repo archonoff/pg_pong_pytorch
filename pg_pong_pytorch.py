@@ -4,6 +4,7 @@ import gym
 import pickle
 from itertools import count
 from contextlib import AbstractContextManager
+from matplotlib import pyplot as plt
 
 import numpy as np
 
@@ -137,6 +138,27 @@ class PongAgent(nn.Module):
         return new_state - old_state
 
     @staticmethod
+    def state_as_image(state):
+        """
+        Можно использовать для обратного преобразования состояния в "картинку"
+        или для преобразования весов активации нейрона в "картинку"
+        """
+        return state.numpy().reshape((80, 80))
+
+    @staticmethod
+    def weights_figure(weights, cols=2, rows=2):
+        images = weights.reshape((200, 80, 80))
+
+        fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
+
+        for image, ax in zip(images, axes.ravel()):
+            ax.imshow(image, cmap='gray')
+            ax.set_xticks(())
+            ax.set_yticks(())
+
+        return fig
+
+    @staticmethod
     def encode_action(action):
         """env принимает значения 2 и 3 в качестве управляющих"""
         return 2 if action else 3
@@ -206,10 +228,9 @@ class PongAgent(nn.Module):
         loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).sum()
         loss.backward()
 
+        # Логирование значения функции потерь
         if self.tensorboard_writer is not None:
             self.tensorboard_writer.add_scalar('loss', loss, global_step=game)
-
-        # todo логировать картинки весов
 
         self.optimizer.step()
 
@@ -229,6 +250,11 @@ class PongAgent(nn.Module):
             if game % self.batch_size == 0:
                 logger.info(f'Оптимизация {game / self.batch_size:.0f}')
                 self.update_parameters(game)
+
+                # Логирование картинок весов
+                if self.tensorboard_writer is not None:
+                    self.tensorboard_writer.add_image('weights', self.state_as_image(list(self.fc1.parameters())[0][100].data), global_step=game, dataformats='HW')
+                    self.tensorboard_writer.add_figure('weights', self.weights_figure(list(self.fc1.parameters())[0].data), global_step=game)
 
             # Каждые save_model_frequency игр модель сохраняется в файл
             if game % self.save_model_frequency == 0:
