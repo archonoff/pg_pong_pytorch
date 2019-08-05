@@ -1,5 +1,6 @@
 # Created by .ignore support plugin (hsz.mobi)
 
 /.idea/
-/save.p
-/model_pytorch.pkl
+/*.p
+/*.pkl
+/runs/
