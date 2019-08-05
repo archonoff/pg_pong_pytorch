@@ -3,4 +3,7 @@
 /.idea/
 /*.p
 /*.pkl
+/*.pt
+/*.pth
+/*.tar
 /runs/

@@ -45,7 +45,7 @@ class SummaryWriter(DefaultSummaryWriter, AbstractContextManager):
 
 class PongAgent(nn.Module):
     render = False
-    model_filename = 'model_pytorch.pkl'
+    model_filename = 'model_pytorch.tar'
 
     batch_size = 10                    # every how many episodes to do a param update?
     save_model_frequency = 100         # через сколько игр сохранять модель (т.е. ее параметры)
@@ -83,21 +83,33 @@ class PongAgent(nn.Module):
     def load_model(cls, resume=True, tensorboard_writer=None):
         """Предзагрузка модели с параметрами"""
 
+        agent = cls(tensorboard_writer=tensorboard_writer)
+
         try:
             if not resume:
                 raise FileNotFoundError
-            with open(cls.model_filename, 'rb') as f:
-                logger.info(f'Загрузка модели из файла {cls.model_filename}')
-                agent = pickle.load(f)
+
+            logger.info(f'Загрузка модели из файла {cls.model_filename}')
+
+            checkpoint = torch.load(cls.model_filename)
+            agent.load_state_dict(checkpoint['model_state_dict'])
+            agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            agent.last_game = checkpoint['last_game']
         except FileNotFoundError:
             logger.info('Создание новой модели')
-            agent = cls(tensorboard_writer=tensorboard_writer)
+
+        agent.train()
 
         return agent
 
     def save_model(self):
-        with open(self.model_filename, 'wb') as f:
-            pickle.dump(self, f)
+        torch.save({
+                'last_game': self.last_game,
+                'model_state_dict': self.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+            },
+            self.model_filename,
+        )
 
     def policy_forward(self, x):
         """Одинарный проход по сети"""
