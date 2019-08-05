@@ -3,12 +3,15 @@ import logging.config
 import gym
 import pickle
 from itertools import count
+from contextlib import AbstractContextManager
 
 import numpy as np
 
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
+from torch.utils.tensorboard import SummaryWriter as DefaultSummaryWriter
+
 
 LOGGING = {
     'version': 1,
@@ -34,7 +37,10 @@ logging.config.dictConfig(LOGGING)
 
 logger = logging.getLogger('pg_pong_pytorch')
 
-logger = logging.getLogger(__name__)
+
+class SummaryWriter(DefaultSummaryWriter, AbstractContextManager):
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
 class PongAgent(nn.Module):
@@ -48,7 +54,7 @@ class PongAgent(nn.Module):
 
     last_game = 0
 
-    def __init__(self):
+    def __init__(self, tensorboard_writer=None):
         super().__init__()
 
         input_units = 80 * 80                   # input dimensionality: 80x80 grid
@@ -63,6 +69,7 @@ class PongAgent(nn.Module):
         self.clean_buffers()
 
         self.env = gym.make('Pong-v0')
+        self.tensorboard_writer = tensorboard_writer
 
     def clean_buffers(self):
         """Буферы используются для хранения всех состояний, действий и вознаграждений в текущей итерации обучения"""
@@ -73,7 +80,7 @@ class PongAgent(nn.Module):
         self.rewards = []
 
     @classmethod
-    def load_model(cls, resume=True):
+    def load_model(cls, resume=True, tensorboard_writer=None):
         """Предзагрузка модели с параметрами"""
 
         try:
@@ -84,7 +91,7 @@ class PongAgent(nn.Module):
                 agent = pickle.load(f)
         except FileNotFoundError:
             logger.info('Создание новой модели')
-            agent = cls()
+            agent = cls(tensorboard_writer=tensorboard_writer)
 
         return agent
 
@@ -174,7 +181,7 @@ class PongAgent(nn.Module):
                 # Один из игроков набрал 21 очко
                 return state, reward_sum
 
-    def update_parameters(self):
+    def update_parameters(self, game):
         self.discount_reward()
         self.normalize_reward()
 
@@ -186,6 +193,11 @@ class PongAgent(nn.Module):
 
         loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).mean()
         loss.backward()
+
+        if self.tensorboard_writer is not None:
+            self.tensorboard_writer.add_scalar('loss', loss, global_step=game)
+
+        # todo логировать картинки весов
 
         self.optimizer.step()
 
@@ -204,7 +216,7 @@ class PongAgent(nn.Module):
             # Оптимизация каждые batch_size сыгранных игр
             if game % self.batch_size == 0:
                 logger.info(f'Оптимизация {game / self.batch_size:.0f}')
-                self.update_parameters()
+                self.update_parameters(game)
 
             # Каждые save_model_frequency игр модель сохраняется в файл
             if game % self.save_model_frequency == 0:
@@ -215,5 +227,6 @@ class PongAgent(nn.Module):
 # todo предзагрузить в модель параметры из numpy версии
 
 if __name__ == '__main__':
-    agent = PongAgent.load_model()
-    agent.training_loop()
+    with SummaryWriter() as tensorboard_writer:
+        agent = PongAgent.load_model(resume=False, tensorboard_writer=tensorboard_writer)
+        agent.training_loop()
