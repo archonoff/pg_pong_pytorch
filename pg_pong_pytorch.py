@@ -1,7 +1,6 @@
 import logging
 import logging.config
 import gym
-import pickle
 from itertools import count
 from contextlib import AbstractContextManager
 from matplotlib import pyplot as plt
