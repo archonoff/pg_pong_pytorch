@@ -253,7 +253,7 @@ class PongAgent(nn.Module):
 
                 # Логирование картинок весов
                 if self.tensorboard_writer is not None:
-                    self.tensorboard_writer.add_image('weights', self.state_as_image(list(self.fc1.parameters())[0][100].data), global_step=game, dataformats='HW')
+                    self.tensorboard_writer.add_image('weight', self.state_as_image(list(self.fc1.parameters())[0][100].data), global_step=game, dataformats='HW')
                     self.tensorboard_writer.add_figure('weights', self.weights_figure(list(self.fc1.parameters())[0].data), global_step=game)
 
             # Каждые save_model_frequency игр модель сохраняется в файл
@@ -266,5 +266,5 @@ class PongAgent(nn.Module):
 
 if __name__ == '__main__':
     with SummaryWriter() as tensorboard_writer:
-        agent = PongAgent.load_model(resume=False, tensorboard_writer=tensorboard_writer)
+        agent = PongAgent.load_model(resume=True, tensorboard_writer=tensorboard_writer)
         agent.training_loop()
