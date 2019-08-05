@@ -203,7 +203,7 @@ class PongAgent(nn.Module):
         action_probs = torch.tensor(self.action_probs, requires_grad=True)
         sampled_action_probs = torch.abs(actions - action_probs)        # Вероятности реально соверешнных действий
 
-        loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).mean()
+        loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).sum()
         loss.backward()
 
         if self.tensorboard_writer is not None:
