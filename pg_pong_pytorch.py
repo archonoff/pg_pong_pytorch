@@ -1,4 +1,5 @@
 import logging
+import logging.config
 import gym
 import pickle
 from itertools import count
@@ -9,11 +10,29 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'default': {
+            'format': '%(levelname)s %(asctime)s %(name)s %(message)s',
+        },
+    },
+    'handlers': {
+        'console':{
+            'class': 'logging.StreamHandler',
+            'level':'DEBUG',
+            'formatter': 'default',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+logging.config.dictConfig(LOGGING)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(levelname)s %(asctime)s %(message)s',
-)
+logger = logging.getLogger('pg_pong_pytorch')
 
 logger = logging.getLogger(__name__)
 
