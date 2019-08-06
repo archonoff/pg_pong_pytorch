@@ -9,7 +9,7 @@ import numpy as np
 
 import torch
 from torch import nn, optim
-from torch.nn import functional as F
+from torch.nn import functional as F, init
 from torch.utils.tensorboard import SummaryWriter as DefaultSummaryWriter
 
 
@@ -51,18 +51,18 @@ class PongAgent(nn.Module):
     save_model_frequency = 100         # через сколько игр сохранять модель (т.е. ее параметры)
     learning_rate = 0.01
     discounting_gamma = 0.99
+    input_units = 80 * 80  # input dimensionality: 80x80 grid
+    hidden_units = 200  # number of hidden layer neurons
 
     last_game = 0
 
     def __init__(self, tensorboard_writer=None):
         super().__init__()
 
-        input_units = 80 * 80                   # input dimensionality: 80x80 grid
-        hidden_units = 200                      # number of hidden layer neurons
-
         # todo попробовать сверточный слой
-        self.fc1 = nn.Linear(input_units, hidden_units)
-        self.fc2 = nn.Linear(hidden_units, 1)
+        self.fc1 = nn.Linear(self.input_units, self.hidden_units)
+        self.fc2 = nn.Linear(self.hidden_units, 1)
+        self.init_parameters()
 
         self.optimizer = optim.RMSprop(self.parameters(), lr=self.learning_rate)
 
@@ -70,6 +70,10 @@ class PongAgent(nn.Module):
 
         self.env = gym.make('Pong-v0')
         self.tensorboard_writer = tensorboard_writer
+
+    def init_parameters(self):
+        init.xavier_normal_(self.fc1.weight)
+        init.xavier_normal_(self.fc2.weight)
 
     def clean_buffers(self):
         """Буферы используются для хранения всех состояний, действий и вознаграждений в текущей итерации обучения"""
@@ -227,9 +231,11 @@ class PongAgent(nn.Module):
         loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).sum()
         loss.backward()
 
-        # Логирование значения функции потерь
         if self.tensorboard_writer is not None:
+            # Логирование значения функции потерь
             self.tensorboard_writer.add_scalar('loss', loss, global_step=game)
+
+            # self.tensorboard_writer.add_embedding(self.state_dict()['fc1.weight'], global_step=game)
 
         self.optimizer.step()
 
@@ -250,10 +256,10 @@ class PongAgent(nn.Module):
                 logger.info(f'Оптимизация {game / self.batch_size:.0f}')
                 self.update_parameters(game)
 
-                # Логирование картинок весов
                 if self.tensorboard_writer is not None:
-                    self.tensorboard_writer.add_image('weight', self.state_as_image(list(self.fc1.parameters())[0][100].data), global_step=game, dataformats='HW')
-                    self.tensorboard_writer.add_figure('weights', self.weights_figure(list(self.fc1.parameters())[0].data), global_step=game)
+                    # Логирование картинок весов
+                    self.tensorboard_writer.add_image('weight', self.state_as_image(self.state_dict()['fc1.weight'][100]), global_step=game, dataformats='HW')
+                    self.tensorboard_writer.add_figure('weights', self.weights_figure(self.state_dict()['fc1.weight']), global_step=game)
 
             # Каждые save_model_frequency игр модель сохраняется в файл
             if game % self.save_model_frequency == 0:
