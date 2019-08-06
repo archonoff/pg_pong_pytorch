@@ -49,7 +49,7 @@ class PongAgent(nn.Module):
 
     batch_size = 10                    # every how many episodes to do a param update?
     save_model_frequency = 100         # через сколько игр сохранять модель (т.е. ее параметры)
-    learning_rate = 0.01
+    learning_rate = 1e-4
     discounting_gamma = 0.99
     input_units = 80 * 80  # input dimensionality: 80x80 grid
     hidden_units = 200  # number of hidden layer neurons
@@ -224,16 +224,27 @@ class PongAgent(nn.Module):
 
         self.optimizer.zero_grad()
 
-        actions = torch.tensor(self.actions).float()
-        action_probs = torch.tensor(self.action_probs, requires_grad=True)
-        sampled_action_probs = torch.abs(actions - action_probs)        # Вероятности реально соверешнных действий
+        total_loss = 0
+        for action, action_prob, reward in zip(self.actions, self.action_probs, self.rewards):
+            # todo этот цикл работает очень долго(
+            sampled_action_prob = torch.abs(action - action_prob)        # Вероятность реально соверешнных действий
+            loss = -torch.log(sampled_action_prob) * reward
+            total_loss += float(loss)
+            loss.backward()
 
-        loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).sum()
-        loss.backward()
+        # actions = torch.tensor(self.actions).float()
+        # action_probs = Variable(torch.tensor(self.action_probs, requires_grad=True))
+        # sampled_action_probs = torch.abs(actions - action_probs)        # Вероятности реально соверешнных действий
+
+        # sampled_action_probs = [torch.abs(action - action_prob) for action, action_prob in zip(self.actions, self.action_probs)]
+        # loss = sum([-torch.log(sap) * reward for sap, reward in zip(sampled_action_probs, self.rewards)])
+
+        # loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).sum()
+        # loss.backward()
 
         if self.tensorboard_writer is not None:
             # Логирование значения функции потерь
-            self.tensorboard_writer.add_scalar('loss', loss, global_step=game)
+            self.tensorboard_writer.add_scalar('loss', total_loss, global_step=game)
 
             # self.tensorboard_writer.add_embedding(self.state_dict()['fc1.weight'], global_step=game)
 
