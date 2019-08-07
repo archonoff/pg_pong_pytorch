@@ -78,7 +78,9 @@ class PongAgent(nn.Module):
     def clean_buffers(self):
         """Буферы используются для хранения всех состояний, действий и вознаграждений в текущей итерации обучения"""
 
+        self.action_logits = []
         self.action_probs = []
+        self.action_logprobs = []
         self.actions = []
         self.states = []
         self.rewards = []
@@ -118,7 +120,7 @@ class PongAgent(nn.Module):
     def policy_forward(self, x):
         """Одинарный проход по сети"""
         x = F.relu(self.fc1(x))
-        x = torch.sigmoid(self.fc2(x))
+        x = self.fc2(x)
         return x
 
     def forward(self, x):
@@ -188,9 +190,15 @@ class PongAgent(nn.Module):
                 self.env.render()
             self.states.append(state)                       # Сохранение состояния
 
-            action_prob = self.policy_forward(state)
-            action = torch.bernoulli(action_prob)           # sample действия из ответа сети
+            action_logit = self.forward(state)
+            action_prob = torch.sigmoid(action_logit)
+            action_logprob = F.logsigmoid(action_logit)
+
+            action = torch.bernoulli(action_prob).detach()           # sample действия из ответа сети
+
+            self.action_logits.append(action_logit)
             self.action_probs.append(action_prob)
+            self.action_logprobs.append(action_logprob)
             self.actions.append(action)
 
             old_state = state
@@ -220,27 +228,22 @@ class PongAgent(nn.Module):
 
     def update_parameters(self, game):
         self.discount_reward()
-        self.normalize_reward()
+        # self.normalize_reward()
 
         self.optimizer.zero_grad()
 
         total_loss = 0
-        for action, action_prob, reward in zip(self.actions, self.action_probs, self.rewards):
+        # for action, action_logprob, reward, state in zip(self.actions, self.action_logprobs, self.rewards, self.states):
+        for state in self.states:
             # todo этот цикл работает очень долго(
-            sampled_action_prob = torch.abs(action - action_prob)        # Вероятность реально соверешнных действий
-            loss = -torch.log(sampled_action_prob) * reward
-            total_loss += float(loss)
-            loss.backward()
+            action_logit = self.forward(state)
+            action_logprob = F.logsigmoid(action_logit)
+            action_logprob.backward()           # todo передавать флаг, верное решение или нет
 
-        # actions = torch.tensor(self.actions).float()
-        # action_probs = Variable(torch.tensor(self.action_probs, requires_grad=True))
-        # sampled_action_probs = torch.abs(actions - action_probs)        # Вероятности реально соверешнных действий
-
-        # sampled_action_probs = [torch.abs(action - action_prob) for action, action_prob in zip(self.actions, self.action_probs)]
-        # loss = sum([-torch.log(sap) * reward for sap, reward in zip(sampled_action_probs, self.rewards)])
-
-        # loss = (-torch.log(sampled_action_probs) * torch.tensor(self.rewards)).sum()
-        # loss.backward()
+            # sampled_action_prob = torch.abs(action - action_prob)        # Вероятность реально соверешнных действий
+            # loss = -torch.log(sampled_action_prob) * reward
+            # total_loss += float(loss)
+            # loss.backward()
 
         if self.tensorboard_writer is not None:
             # Логирование значения функции потерь
@@ -282,5 +285,5 @@ class PongAgent(nn.Module):
 
 if __name__ == '__main__':
     with SummaryWriter() as tensorboard_writer:
-        agent = PongAgent.load_model(resume=True, tensorboard_writer=tensorboard_writer)
+        agent = PongAgent.load_model(resume=False, tensorboard_writer=tensorboard_writer)
         agent.training_loop()
